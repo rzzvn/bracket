@@ -267,7 +267,7 @@ function shufflePlayers() {
   const mp = ns.slice(info.numR1Byes);
 
   const r1Matches = [];
-  for (let i=0;i<mp.length;i+=2) r1Matches.push({player1:mp[i].name, player2:mp[i+1]?mp[i+1].name:'BYE', winner:null});
+  for (let i=0;i<mp.length;i+=2) r1Matches.push({player1:mp[i].name, player2:mp[i+1]?mp[i+1].name:'Dummy', winner:null});
 
   const seedPos = distributeSeedsInQF(info.seeds.length, info.qfSlots);
   const qf = Array.from({length:info.qfSlots/2},()=>({player1:null,player2:null,winner:null,p1ph:false,p2ph:false}));
@@ -298,8 +298,8 @@ function distributeSeedsInQF(n,s){return(s===8?[0,7,3,4,1,6,2,5]:[0,3,1,2]).slic
 
 function renderShufflePreview() {
   let h='';
-  if(state.shuffleInfo.r1Matches.length>0) state.shuffleInfo.r1Matches.forEach((m,i)=>{h+=`<div class="preview-match"><div class="round-label">Match ${i+1}</div><div>${m.player1}</div><div class="vs">VS</div><div>${m.player2==='BYE'?'<span class="bye-label">BYE</span>':m.player2}</div></div>`;});
-  if(state.shuffleInfo.byes.length>0) state.shuffleInfo.byes.forEach(b=>{h+=`<div class="preview-match"><div class="round-label">BYE→QF</div><div>${b.name}</div><div class="bye-label">Advances</div></div>`;});
+  if(state.shuffleInfo.r1Matches.length>0) state.shuffleInfo.r1Matches.forEach((m,i)=>{h+=`<div class="preview-match"><div class="round-label">Match ${i+1}</div><div>${m.player1}</div><div class="vs">VS</div><div>${m.player2==='Dummy'?'<span class="bye-label">Dummy</span>':m.player2}</div></div>`;});
+  if(state.shuffleInfo.byes.length>0) state.shuffleInfo.byes.forEach(b=>{h+=`<div class="preview-match"><div class="round-label">Bye→QF</div><div>${b.name}</div><div class="bye-label">Advances</div></div>`;});
   document.getElementById('shuffle-preview-content').innerHTML=h||'<p style="color:var(--text-dim)">No R1 matches.</p>';
   let sh=''; state.bracketInfo.seeds.forEach(s=>{sh+=`<div class="preview-match"><div class="round-label">Seed #${s.seedRank}</div><div style="color:var(--gold);font-weight:bold">${s.name}</div><div class="bye-label">→ QF</div></div>`;});
   document.getElementById('seeds-preview').innerHTML=sh;
@@ -312,7 +312,7 @@ function lockIn() {
 
   // Auto-advance BYE in R1
   const r1=state.mainBracket.rounds.find(r=>r.name==='Round 1');
-  if(r1) r1.matches.forEach((m,i)=>{if(m.player2==='BYE'){m.winner=m.player1;advanceMain('Round 1',i,m.player1);}});
+  if(r1) r1.matches.forEach((m,i)=>{if(m.player2==='Dummy'){m.winner=m.player1;advanceMain('Round 1',i,m.player1);}});
 
   // Build Losers Bracket structure
   buildLB();
@@ -322,29 +322,35 @@ function lockIn() {
 function buildLB() {
   const info = state.bracketInfo;
   const r1 = state.mainBracket.rounds.find(r=>r.name==='Round 1');
-  const r1Losers = r1 ? r1.matches.filter(m=>m.player2!=='BYE').length : 0;
+  const r1Losers = r1 ? r1.matches.filter(m=>m.player2!=='Dummy').length : 0;
   const qfLosers = info.qfSlots / 2;
   const sfLosers = info.qfSlots / 4;
   const finalsLosers = 1;
 
   const lb = { rounds: [] };
 
-  // Helper: make all 3-way matches. If n%3 != 0, add BYE players to fill.
-  // n%3==1 → add 2 BYEs (makes one extra match: 1 real + 2 BYE)
-  // n%3==2 → add 1 BYE (fills last match to 3)
+  // Helper: make all 3-way matches. Max 1 Dummy per match.
+  // n%3==0 → all 3-way, no Dummies
+  // n%3==1 → (n-1)/3 matches of 3 + 1 player auto-advances (free pass slot)
+  // n%3==2 → (n-2)/3 matches of 3 + 1 match of [real, real, BYE]
   function make3way(n) {
     if (n <= 0) return [];
-    if (n === 1) return [{ players: [null, 'BYE', 'BYE'], winner: null }]; // auto-win
-    const byes = n % 3 === 0 ? 0 : (3 - (n % 3));
-    const total = n + byes;
+    if (n === 1) return []; // 1 player auto-advances, no match needed
+    if (n === 2) return [{ players: [null, null, 'Dummy'], winner: null }]; // 2 real + 1 Dummy
+
     const matches = [];
-    for (let i = 0; i < total / 3; i++) matches.push({ players: Array(3).fill(null), winner: null });
-    // Fill BYE slots from the end
-    let byeCount = byes;
-    for (let i = matches.length - 1; i >= 0 && byeCount > 0; i--) {
-      for (let j = 2; j >= 0 && byeCount > 0; j--) {
-        if (matches[i].players[j] === null) { matches[i].players[j] = 'BYE'; byeCount--; }
-      }
+    const remainder = n % 3;
+
+    if (remainder === 0) {
+      for (let i = 0; i < n / 3; i++) matches.push({ players: [null, null, null], winner: null });
+    } else if (remainder === 1) {
+      // (n-1) players play in (n-1)/3 matches. 1 player gets free pass (auto-advance).
+      for (let i = 0; i < (n - 1) / 3; i++) matches.push({ players: [null, null, null], winner: null });
+      // Free pass: this "match" has 1 real player who auto-advances
+      matches.push({ players: [null], winner: null, freePass: true });
+    } else if (remainder === 2) {
+      for (let i = 0; i < (n - 2) / 3; i++) matches.push({ players: [null, null, null], winner: null });
+      matches.push({ players: [null, null, 'Dummy'], winner: null }); // 2 real + 1 Dummy
     }
     return matches;
   }
@@ -354,7 +360,7 @@ function buildLB() {
     if (n <= 1) return [{ players: Array(Math.max(n,1)).fill(null), winner: null }];
     const matches = [];
     for (let i = 0; i < Math.floor(n/2); i++) matches.push({ players: [null, null], winner: null });
-    if (n % 2 === 1) { /* odd player gets bye - add to last match? or separate */ matches.push({ players: [null, 'BYE'], winner: null }); }
+    if (n % 2 === 1) { /* odd player gets bye - add to last match? or separate */ matches.push({ players: [null, 'Dummy'], winner: null }); }
     return matches;
   }
 
@@ -364,7 +370,7 @@ function buildLB() {
     lb.rounds.push({ name: 'LB Round 1', matches });
   } else if (r1Losers === 1) {
     // 1 R1 loser gets a bye (auto-advances to R2)
-    lb.rounds.push({ name: 'LB Round 1', matches: [{ players: [null, 'BYE', 'BYE'], winner: null }] });
+    lb.rounds.push({ name: 'LB Round 1', matches: [{ players: [null, 'Dummy', 'Dummy'], winner: null }] });
   }
 
   // LB Round 2: QF losers + LB R1 winners (all 3-way)
@@ -451,7 +457,7 @@ function clickMain(ri,mi,winner) {
   advanceMain(rn,mi,winner);
 
   // Place loser in LB (except Grand Finals loser)
-  if(loser&&loser!=='BYE'&&rn!=='Grand Finals') placeLBLoser(loser,rn);
+  if(loser&&loser!=='Dummy'&&rn!=='Grand Finals') placeLBLoser(loser,rn);
 
   // Check GF complete
   const gf=state.mainBracket.rounds[state.mainBracket.rounds.length-1];
@@ -461,7 +467,7 @@ function clickMain(ri,mi,winner) {
   checkLBChampion();
 
   renderAll();
-  toast(rn==='Grand Finals'?`� ${winner} is CHAMPION!`:`${winner} wins! ${loser&&loser!=='BYE'?loser+' → LB':''}`);
+  toast(rn==='Grand Finals'?`� ${winner} is CHAMPION!`:`${winner} wins! ${loser&&loser!=='Dummy'?loser+' → LB':''}`);
   save();
 }
 
@@ -492,10 +498,20 @@ function placeLBLoser(name, fromRound) {
   if (targetRound < 0) return;
 
   const round = state.losersBracket.rounds[targetRound];
-  // Find first empty (null) slot in this round's matches — BYE slots are already 'BYE', not null
-  for (let m of round.matches) {
+  // Find first empty (null) slot — Dummy slots are 'Dummy', not null
+  for (let mi = 0; mi < round.matches.length; mi++) {
+    const m = round.matches[mi];
     const emptyIdx = m.players.indexOf(null);
-    if (emptyIdx !== -1) { m.players[emptyIdx] = name; return; }
+    if (emptyIdx !== -1) {
+      m.players[emptyIdx] = name;
+      // If this is a free pass match, auto-advance the player
+      if (m.freePass) {
+        m.winner = name;
+        advanceLBWinner(targetRound, mi, name);
+        checkLBChampion();
+      }
+      return;
+    }
   }
 }
 
@@ -573,18 +589,29 @@ function renderLB() {
 
     round.matches.forEach((m,mi) => {
       const md = document.createElement('div'); md.className = 'match-box';
+
+      // Free pass: just show the player with a "FREE PASS" label
+      if (m.freePass) {
+        if (m.winner) md.classList.add('completed');
+        const name = m.players[0] || '⏳ TBD';
+        md.innerHTML = `<div class="match-player ${m.winner?'winner':'placeholder'}" style="text-align:center;cursor:default;"><span>${name} ${m.winner?'✓ Free Pass':'(Free Pass)'}</span></div>`;
+        rd.appendChild(md); return;
+      }
+
       const allFilled = m.players.every(p=>p!==null);
-      const active = allFilled && !m.winner;
+      const active = allFilled && !m.winner && !m.players.every(p=>p==='Dummy');
       if (active) md.classList.add('lb-active');
       if (m.winner) md.classList.add('completed');
 
       m.players.forEach(p => {
-        const isW = m.winner===p, isL = m.winner&&m.winner!==p, isEmpty = !p;
+        const isBye = p==='Dummy';
+        const isW = m.winner===p && !isBye, isL = m.winner&&m.winner!==p&&!isBye, isEmpty = !p;
         let cls = 'match-player';
         if(isW) cls+=' winner'; else if(isL) cls+=' loser';
         if(isEmpty) cls+=' placeholder';
-        const click = active&&p ? `onclick="clickLB(${ri},${mi},'${esc(p)}')"` : '';
-        md.innerHTML += `<div class="${cls}" ${click}><span>${p||'⏳ TBD'}</span></div>`;
+        if(isBye) cls+=' placeholder';
+        const click = active&&p&&!isBye ? `onclick="clickLB(${ri},${mi},'${esc(p)}')"` : '';
+        md.innerHTML += `<div class="${cls}" ${click}><span>${p||'⏳ TBD'}${isBye?' (Dummy)':''}</span></div>`;
       });
       rd.appendChild(md);
     });
